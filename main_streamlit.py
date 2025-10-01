@@ -1,3 +1,5 @@
+import os
+
 import streamlit as st
 import sqlite3
 import pandas as pd
@@ -477,6 +479,7 @@ def export_to_excel(conn, jobs_df, equipment_df, start_date, end_date, calendar_
                     if not job_data.get('is_weekend', False) and job_start <= job_end:  # Только рабочие дни
                         start_letter = get_column_letter(job_start)
                         end_letter = get_column_letter(job_end)
+
                         merge_range = f'{start_letter}{middle_row}:{end_letter}{middle_row}'
                         ws.merge_cells(merge_range)
 
@@ -486,9 +489,12 @@ def export_to_excel(conn, jobs_df, equipment_df, start_date, end_date, calendar_
                         if len(job_text) > 15:
                             job_text = job_text[:15] + '...'
 
-                        job_cell.value = job_text
-                        job_cell.alignment = center_align
-                        job_cell.font = Font(size=8, bold=True)
+                        try:
+                            job_cell.value = job_text
+                            job_cell.alignment = center_align
+                            job_cell.font = Font(size=8, bold=True)
+                        except Exception as e:
+                            pass
 
                         color_hex = job_data['job']['order_color'].lstrip('#')
                         job_cell.fill = PatternFill(
@@ -1116,9 +1122,11 @@ def check_equipment_conflicts(conn, equipment_id: int, job_id: int, start_date_s
 
         return start_with_offset, end_dt
 
-    def has_time_conflict(test_start_dt: datetime, conflict_start_dt: datetime, conflict_end_dt: datetime) -> bool:
+    def has_time_conflict(test_start_dt: datetime, test_end_dt: datetime, conflict_start_dt: datetime, conflict_end_dt: datetime) -> bool:
         """Проверяет пересечение временных интервалов"""
-        return conflict_start_dt <= test_start_dt < conflict_end_dt
+        return conflict_start_dt <= test_start_dt < conflict_end_dt or \
+            conflict_start_dt < test_end_dt <= conflict_end_dt or \
+            (test_start_dt <= conflict_start_dt and test_end_dt >= conflict_end_dt)
 
     # Начинаем с исходной даты
     current_date = start_date_str
@@ -1164,7 +1172,7 @@ def check_equipment_conflicts(conn, equipment_id: int, job_id: int, start_date_s
             )
 
             # Проверяем конфликт
-            if has_time_conflict(test_start_dt, conflict_start_dt, conflict_end_dt):
+            if has_time_conflict(test_start_dt,test_end_dt, conflict_start_dt, conflict_end_dt):
                 has_conflict = True
 
                 # Начинаем после окончания конфликтующей работы + 0.25 часа
@@ -2266,6 +2274,18 @@ def recalculate_priority_order(conn):
 
     conn.commit()
 
+def load_fonts_for_deployment():
+    """Функция для загрузки шрифтов в deployment среде"""
+    # Пробуем загрузить из папки fonts
+    font_path = "./fonts/arial.ttf"
+    boldfont_path = "./fonts/arialbd.ttf"
+    if os.path.exists(font_path):
+        return {
+            'small': ImageFont.truetype(font_path, 10),
+            'medium': ImageFont.truetype(font_path, 12),
+            'large': ImageFont.truetype(boldfont_path, 14)
+        }
+
 
 def show_gantt_chart(conn):
     # Загружаем настройки из БД
@@ -2579,15 +2599,21 @@ def show_gantt_chart(conn):
         image = Image.new('RGB', (total_diagram_width, total_height), color='white')
         draw = ImageDraw.Draw(image)
 
-        # Загружаем шрифты
-        try:
-            font_small = ImageFont.truetype("arial.ttf", 10)
-            font_medium = ImageFont.truetype("arial.ttf", 12)
-            font_large = ImageFont.truetype("arialbd.ttf", 14)
-        except:
-            font_small = ImageFont.load_default()
-            font_medium = ImageFont.load_default()
-            font_large = ImageFont.load_default()
+        # ЗАГРУЖАЕМ ШРИФТЫ С ПОДДЕРЖКОЙ КИРИЛЛИЦЫ - ДОБАВЬТЕ ЭТОТ БЛОК
+        fonts = load_fonts_for_deployment()
+        font_small = fonts['small']
+        font_medium = fonts['medium']
+        font_large = fonts['large']
+
+        # # Загружаем шрифты
+        # try:
+        #     font_small = ImageFont.truetype("arial.ttf", 10)
+        #     font_medium = ImageFont.truetype("arial.ttf", 12)
+        #     font_large = ImageFont.truetype("arialbd.ttf", 14)
+        # except:
+        #     font_small = ImageFont.load_default()
+        #     font_medium = ImageFont.load_default()
+        #     font_large = ImageFont.load_default()
 
         # Рисуем заголовок с указанием даты начала
         title = f"График загрузки - { {'year': 'на год', 'month': 'на месяц', 'week': 'на неделю'}[view_mode]} (с {start_date.strftime('%d.%m.%Y')})"
