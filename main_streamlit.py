@@ -1106,84 +1106,280 @@ def is_sort_order_unique(conn, table_name: str, sort_order: int, exclude_id: int
 def show_equipment_types_page(conn):
     st.header("🔧 Типы оборудования")
 
+    # Информация о системе приоритетов
+    with st.expander("ℹ️ О системе очереди типов оборудования"):
+        st.info("""
+        **Система очереди типов оборудования:**
+        - Типы оборудования отображаются в порядке сверху вниз
+        - Первый тип в списке имеет высший приоритет
+        - Для изменения порядка используйте кнопки ↑ и ↓
+        - Порядковый номер обновляется автоматически
+        """)
+
     col1, col2 = st.columns([1, 2])
 
     with col1:
         st.subheader("Добавить тип оборудования")
         with st.form("add_equipment_type", clear_on_submit=True):
             name = st.text_input("Наименование типа*")
-            sort_order = st.number_input(
-                "Порядковый номер*",
-                min_value=1,
-                value=get_next_sort_order(conn, 'equipment_types')
-            )
             color = st.color_picker("Цвет*", "#FF0000")
 
             if st.form_submit_button("Добавить тип"):
                 if not name:
                     st.error("Введите наименование типа")
-                elif not is_sort_order_unique(conn, 'equipment_types', sort_order):
-                    st.error("Порядковый номер уже занят")
                 else:
                     try:
                         cursor = conn.cursor()
+                        # Получаем следующий порядковый номер
+                        cursor.execute("SELECT MAX(sort_order) FROM equipment_types")
+                        max_order = cursor.fetchone()[0] or 0
+                        next_order = max_order + 1
+
                         cursor.execute(
                             "INSERT INTO equipment_types (name, sort_order, color) VALUES (?, ?, ?)",
-                            (name, sort_order, color)
+                            (name, next_order, color)
                         )
                         conn.commit()
                         st.success("✅ Тип оборудования добавлен!")
                         st.rerun()
-                    except sqlite3.IntegrityError:
-                        st.error("❌ Тип оборудования с таким именем уже существует")
+                    except sqlite3.IntegrityError as e:
+                        if "UNIQUE constraint failed: equipment_types.name" in str(e):
+                            st.error("❌ Тип оборудования с таким именем уже существует")
+                        else:
+                            st.error(f"❌ Ошибка при добавлении типа: {str(e)}")
 
     with col2:
-        st.subheader("Список типов оборудования")
+        st.subheader("Очередь типов оборудования")
 
-        types_df = pd.read_sql("SELECT * FROM equipment_types ORDER BY sort_order", conn)
+        # CSS для компактного отображения
+        st.markdown("""
+        <style>
+            .compact-type-item {
+                padding: 2px 0px !important;
+                margin: 0px !important;
+                border: none !important;
+            }
+            .color-square {
+                width: 16px;
+                height: 16px;
+                border-radius: 3px;
+                display: inline-block;
+                margin-right: 6px;
+            }
+            .compact-divider {
+                margin: 1px 0px !important;
+                padding: 0px !important;
+                height: 1px;
+                background-color: #e0e0e0;
+            }
+            .type-id {
+                font-size: 0.75em;
+                color: #666;
+                margin-left: 4px;
+            }
+            .equipment-info {
+                font-size: 1em;
+                color: #888;
+                margin-left: 8px;
+                display: inline-block;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+
+        # Загружаем типы оборудования с информацией о связанном оборудовании
+        types_df = pd.read_sql('''
+            SELECT et.*, 
+                   COUNT(e.id) as equipment_count
+            FROM equipment_types et
+            LEFT JOIN equipment e ON et.id = e.type_id
+            GROUP BY et.id
+            ORDER BY et.sort_order
+        ''', conn)
 
         if not types_df.empty:
-            for _, row in types_df.iterrows():
-                with st.expander(f"{row['name']} (Порядок: {row['sort_order']})"):
-                    col21, col22, col23 = st.columns(3)
+            # Заполняем NaN значения нулями
+            types_df['equipment_count'] = types_df['equipment_count'].fillna(0).astype(int)
 
-                    with col21:
-                        new_name = st.text_input("Наименование", value=row['name'], key=f"name_{row['id']}")
-                    with col22:
-                        new_order = st.number_input("Порядок", value=row['sort_order'], key=f"order_{row['id']}")
-                    with col23:
-                        new_color = st.color_picker("Цвет", value=row['color'], key=f"color_{row['id']}")
+            # Статистика
+            total_types = len(types_df)
+            st.info(f"📊 Всего типов оборудования: {total_types}")
 
-                    col24, col25 = st.columns(2)
-                    with col24:
-                        if st.button("💾 Сохранить", key=f"save_{row['id']}"):
-                            if not is_sort_order_unique(conn, 'equipment_types', new_order, row['id']):
-                                st.error("Порядковый номер уже занят")
+            # Отображаем текущий порядок с кнопками для перемещения
+            for index, row in types_df.iterrows():
+                priority_number = index + 1
+                equipment_count = row['equipment_count']
+
+                # Создаем контейнер для каждого типа
+                with st.container():
+                    col1, col2, col3, col4, col5 = st.columns([0.3, 0.2, 3, 1, 0.6])
+
+                    with col1:
+                        st.markdown(f"<div style='font-size: 0.9em;'>#{priority_number}</div>",
+                                    unsafe_allow_html=True)
+
+                    with col2:
+                        # Цветной квадрат
+                        st.markdown(
+                            f'<div class="color-square" style="background-color: {row["color"]};"></div>',
+                            unsafe_allow_html=True
+                        )
+
+                    with col3:
+                        # Компактное отображение названия, ID и информации об оборудовании
+                        equipment_info = ""
+                        if equipment_count > 0:
+                            equipment_info = f"<span class='equipment-info'>{equipment_count} ед. обор.</span>"
+                        else:
+                            equipment_info = "<span class='equipment-info'>нет оборудования</span>"
+
+                        st.markdown(
+                            f"<div style='line-height: 1.2;'>"
+                            f"<span style='font-weight: bold;'>{row['name']}</span>"
+                            f"<span class='type-id'>   (ID: {row['id']})</span>"
+                            f"{equipment_info}"
+                            f"</div>",
+                            unsafe_allow_html=True
+                        )
+
+                    with col4:
+                        # Кнопки перемещения
+                        move_col1, move_col2 = st.columns(2)
+                        with move_col1:
+                            if st.button("↑", key=f"up_{row['id']}", use_container_width=True):
+                                if priority_number > 1:
+                                    move_type_up(conn, row['id'])
+                                    st.rerun()
+                        with move_col2:
+                            if st.button("↓", key=f"down_{row['id']}", use_container_width=True):
+                                if priority_number < len(types_df):
+                                    move_type_down(conn, row['id'])
+                                    st.rerun()
+
+                    with col5:
+                        # Кнопка редактирования
+                        button_text = "✏️" if 'expanded_type' not in st.session_state or st.session_state.expanded_type != \
+                                              row['id'] else "▼"
+                        if st.button(button_text, key=f"edit_{row['id']}", use_container_width=True):
+                            if 'expanded_type' not in st.session_state or st.session_state.expanded_type != row['id']:
+                                st.session_state.expanded_type = row['id']
                             else:
+                                st.session_state.expanded_type = None
+                            st.rerun()
+
+                    # Компактный разделитель
+                    if index < len(types_df) - 1:  # Не показывать после последнего элемента
+                        st.markdown('<div class="compact-divider"></div>', unsafe_allow_html=True)
+
+            # Формы редактирования
+            for _, row in types_df.iterrows():
+                if 'expanded_type' in st.session_state and st.session_state.expanded_type == row['id']:
+                    with st.expander(f"Редактировать тип: {row['name']} (ID: {row['id']})", expanded=True):
+                        col_edit1, col_edit2 = st.columns([3, 1])
+
+                        with col_edit1:
+                            new_name = st.text_input("Наименование", value=row['name'], key=f"name_{row['id']}")
+                        with col_edit2:
+                            new_color = st.color_picker("Цвет", value=row['color'], key=f"color_{row['id']}")
+
+                        # Информация о связанном оборудовании
+                        if row['equipment_count'] > 0:
+                            st.info(f"**Связанное оборудование:** {row['equipment_count']} единиц")
+                        else:
+                            st.info("**Связанное оборудование:** Нет")
+
+                        col_act1, col_act2, col_act3 = st.columns(3)
+                        with col_act1:
+                            if st.button("💾 Сохранить", key=f"save_{row['id']}", use_container_width=True):
                                 cursor = conn.cursor()
                                 cursor.execute(
-                                    "UPDATE equipment_types SET name=?, sort_order=?, color=? WHERE id=?",
-                                    (new_name, new_order, new_color, row['id'])
+                                    "UPDATE equipment_types SET name=?, color=? WHERE id=?",
+                                    (new_name, new_color, row['id'])
                                 )
                                 conn.commit()
-                                st.success("Тип оборудования обновлен!")
+                                st.session_state.expanded_type = None
+                                st.success("✅ Тип оборудования обновлен!")
                                 st.rerun()
-
-                    with col25:
-                        if st.button("🗑️ Удалить", key=f"delete_{row['id']}"):
-                            cursor = conn.cursor()
-                            cursor.execute("SELECT COUNT(*) FROM equipment WHERE type_id=?", (row['id'],))
-                            equipment_count = cursor.fetchone()[0]
-
-                            if equipment_count > 0:
-                                st.error(f"Нельзя удалить тип: связано {equipment_count} единиц оборудования")
-                            else:
-                                cursor.execute("DELETE FROM equipment_types WHERE id=?", (row['id'],))
-                                conn.commit()
-                                st.success("Тип оборудования удален!")
+                        with col_act2:
+                            if st.button("🗑️ Удалить", key=f"delete_{row['id']}", use_container_width=True):
+                                cursor = conn.cursor()
+                                if row['equipment_count'] > 0:
+                                    st.error(
+                                        f"❌ Нельзя удалить тип: связано {row['equipment_count']} единиц оборудования")
+                                else:
+                                    # Сначала удаляем тип
+                                    cursor.execute("DELETE FROM equipment_types WHERE id=?", (row['id'],))
+                                    conn.commit()
+                                    # Затем пересчитываем порядок оставшихся типов
+                                    recalculate_type_order(conn)
+                                    st.session_state.expanded_type = None
+                                    st.success("✅ Тип оборудования удален!")
+                                    st.rerun()
+                        with col_act3:
+                            if st.button("❌ Отмена", key=f"cancel_{row['id']}", use_container_width=True):
+                                st.session_state.expanded_type = None
                                 st.rerun()
         else:
             st.info("📝 Нет типов оборудования. Добавьте первый тип.")
+
+
+def move_type_up(conn, type_id):
+    """Перемещает тип оборудования на одну позицию вверх"""
+    cursor = conn.cursor()
+
+    # Получаем текущий порядок типа
+    cursor.execute("SELECT sort_order FROM equipment_types WHERE id = ?", (type_id,))
+    current_order = cursor.fetchone()[0]
+
+    # Получаем тип с предыдущим порядком
+    cursor.execute("SELECT id, sort_order FROM equipment_types WHERE sort_order < ? ORDER BY sort_order DESC LIMIT 1",
+                   (current_order,))
+    previous_type = cursor.fetchone()
+
+    if previous_type:
+        previous_id, previous_order = previous_type
+
+        # Временно устанавливаем уникальные значения чтобы избежать конфликта UNIQUE
+        cursor.execute("UPDATE equipment_types SET sort_order = -1 WHERE id = ?", (type_id,))
+        cursor.execute("UPDATE equipment_types SET sort_order = ? WHERE id = ?", (current_order, previous_id))
+        cursor.execute("UPDATE equipment_types SET sort_order = ? WHERE id = ?", (previous_order, type_id))
+
+        conn.commit()
+
+
+def move_type_down(conn, type_id):
+    """Перемещает тип оборудования на одну позицию вниз"""
+    cursor = conn.cursor()
+
+    # Получаем текущий порядок типа
+    cursor.execute("SELECT sort_order FROM equipment_types WHERE id = ?", (type_id,))
+    current_order = cursor.fetchone()[0]
+
+    # Получаем тип со следующим порядком
+    cursor.execute("SELECT id, sort_order FROM equipment_types WHERE sort_order > ? ORDER BY sort_order ASC LIMIT 1",
+                   (current_order,))
+    next_type = cursor.fetchone()
+
+    if next_type:
+        next_id, next_order = next_type
+
+        # Временно устанавливаем уникальные значения чтобы избежать конфликта UNIQUE
+        cursor.execute("UPDATE equipment_types SET sort_order = -1 WHERE id = ?", (type_id,))
+        cursor.execute("UPDATE equipment_types SET sort_order = ? WHERE id = ?", (current_order, next_id))
+        cursor.execute("UPDATE equipment_types SET sort_order = ? WHERE id = ?", (next_order, type_id))
+
+        conn.commit()
+
+
+def recalculate_type_order(conn):
+    """Пересчитывает порядок сортировки после удаления типа"""
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM equipment_types ORDER BY sort_order")
+    types = cursor.fetchall()
+
+    for i, (type_id,) in enumerate(types):
+        cursor.execute("UPDATE equipment_types SET sort_order = ? WHERE id = ?", (i + 1, type_id))
+
+    conn.commit()
 
 
 # Страница оборудования
