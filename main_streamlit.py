@@ -770,34 +770,57 @@ def undo(conn):
 
     current_pos, max_pos = result
 
+    # Нельзя откатиться если текущая позиция 0 или меньше
     if current_pos < 0:
-        return False  # Нельзя откатиться дальше
+        return False
 
     # Восстанавливаем предыдущее состояние
     prev_pos = current_pos - 1
 
-    # Сохраняем текущее состояние во временную таблицу
-    cursor.execute('DROP TABLE IF EXISTS temp_current_jobs')
-    cursor.execute('CREATE TABLE temp_current_jobs AS SELECT * FROM jobs')
+    # Если предыдущая позиция -1, значит мы пытаемся откатиться до начального состояния
+    if prev_pos < 0:
+        # Сохраняем текущее состояние во временную таблицу
+        cursor.execute('DROP TABLE IF EXISTS temp_current_jobs')
+        cursor.execute('CREATE TABLE temp_current_jobs AS SELECT * FROM jobs')
 
-    # Очищаем основную таблицу
-    cursor.execute('DELETE FROM jobs')
+        # Очищаем основную таблицу (начальное состояние - пустая таблица jobs)
+        cursor.execute('DELETE FROM jobs')
 
-    # Восстанавливаем из истории
-    cursor.execute(f'INSERT INTO jobs SELECT * FROM jobs_history_{prev_pos}')
+        # Обновляем состояние истории
+        cursor.execute(
+            'UPDATE history_state SET current_position = ? WHERE id = 1',
+            (-1,)  # Устанавливаем позицию -1 (начальное состояние)
+        )
 
-    # Обновляем состояние истории
-    cursor.execute(
-        'UPDATE history_state SET current_position = ? WHERE id = 1',
-        (prev_pos,)
-    )
+        # Сохраняем текущее состояние обратно в историю для возможности redo
+        cursor.execute(f'DROP TABLE IF EXISTS jobs_history_{current_pos}')
+        cursor.execute(f'ALTER TABLE temp_current_jobs RENAME TO jobs_history_{current_pos}')
 
-    # Сохраняем текущее состояние обратно в историю для возможности redo
-    cursor.execute(f'DROP TABLE IF EXISTS jobs_history_{current_pos}')
-    cursor.execute(f'ALTER TABLE temp_current_jobs RENAME TO jobs_history_{current_pos}')
+        conn.commit()
+        return True
+    else:
+        # Сохраняем текущее состояние во временную таблицу
+        cursor.execute('DROP TABLE IF EXISTS temp_current_jobs')
+        cursor.execute('CREATE TABLE temp_current_jobs AS SELECT * FROM jobs')
 
-    conn.commit()
-    return True
+        # Очищаем основную таблицу
+        cursor.execute('DELETE FROM jobs')
+
+        # Восстанавливаем из истории (prev_pos гарантированно >= 0)
+        cursor.execute(f'INSERT INTO jobs SELECT * FROM jobs_history_{prev_pos}')
+
+        # Обновляем состояние истории
+        cursor.execute(
+            'UPDATE history_state SET current_position = ? WHERE id = 1',
+            (prev_pos,)
+        )
+
+        # Сохраняем текущее состояние обратно в историю для возможности redo
+        cursor.execute(f'DROP TABLE IF EXISTS jobs_history_{current_pos}')
+        cursor.execute(f'ALTER TABLE temp_current_jobs RENAME TO jobs_history_{current_pos}')
+
+        conn.commit()
+        return True
 
 
 def redo(conn):
@@ -859,7 +882,7 @@ def get_history_state(conn):
     return {
         'current_position': current_pos,
         'max_position': max_pos,
-        'can_undo': current_pos > 0,
+        'can_undo': current_pos >= 0,  # Можно откатить если позиция >= 0
         'can_redo': current_pos < max_pos
     }
 
