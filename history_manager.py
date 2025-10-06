@@ -491,6 +491,8 @@ def show_history_controls(history_manager: HistoryManager):
                            use_container_width=True,
                            help="Отменить последнее действие (CTRL+Z)" if history_state['can_undo'] else "Нет действий для отмены"):
             if history_manager.undo():
+                # В функции отката истории добавьте:
+                st.session_state.history_restored = True
                 st.rerun()
             else:
                 st.sidebar.error("Не удалось выполнить отмену")
@@ -501,6 +503,8 @@ def show_history_controls(history_manager: HistoryManager):
                            use_container_width=True, hint=False,
                            help="Повторить отмененное действие  (CTRL+Y)" if history_state['can_redo'] else "Нет действий для повтора"):
             if history_manager.redo():
+                # В функции отката истории добавьте:
+                st.session_state.history_restored = True
                 st.rerun()
             else:
                 st.sidebar.error("Не удалось выполнить повтор")
