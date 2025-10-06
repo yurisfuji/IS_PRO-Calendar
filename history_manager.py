@@ -23,37 +23,6 @@ class HistoryManager:
         """Инициализирует таблицы для работы с историей"""
         cursor = self.conn.cursor()
 
-        # Таблица истории изменений
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS jobs_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                job_id INTEGER NOT NULL,
-                version INTEGER NOT NULL,
-                order_id INTEGER NOT NULL,
-                equipment_id INTEGER NOT NULL,
-                duration_hours REAL NOT NULL,
-                hour_offset REAL NOT NULL DEFAULT 0,
-                start_date TEXT,
-                status TEXT NOT NULL,
-                is_locked BOOLEAN NOT NULL DEFAULT 0,
-                changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                operation_type TEXT CHECK(operation_type IN ('INSERT', 'UPDATE', 'DELETE', 'SNAPSHOT')),
-                user_action TEXT,
-                FOREIGN KEY (job_id) REFERENCES jobs (id) ON DELETE CASCADE
-            )
-        ''')
-
-        # Таблица управления версиями
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS history_versions (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                current_version INTEGER NOT NULL DEFAULT 0,
-                max_version INTEGER NOT NULL DEFAULT 0,
-                max_history_depth INTEGER NOT NULL DEFAULT 50,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-
         # Инициализация версий
         cursor.execute(f'''
             INSERT OR IGNORE INTO history_versions 
