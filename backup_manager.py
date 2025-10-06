@@ -7,6 +7,8 @@ import shutil
 import io
 from datetime import datetime
 
+from history_manager import MAX_HISTORY_VERSIONS
+
 
 def backup_database():
     """Создает бэкап базы данных и возвращает zip-архив"""
@@ -82,7 +84,12 @@ def _clean_and_reset_history():
 
         # Сбрасываем счетчик версий истории
         cursor.execute('DELETE FROM history_versions')
-        cursor.execute('INSERT INTO history_versions (id, current_version) VALUES (1, 0)')
+        # Инициализация версий
+        cursor.execute(f'''
+            INSERT OR IGNORE INTO history_versions 
+            (id, current_version, max_version, max_history_depth) 
+            VALUES (1, 0, 0, {MAX_HISTORY_VERSIONS})
+        ''')
 
         temp_conn.commit()
         temp_conn.close()
@@ -192,33 +199,6 @@ def init_db():
                                        row_height, job_height_ratio, chart_start_date)
             VALUES (1, 'week', 20, 70, 80, ?)
         ''', (datetime.now().date().isoformat(),))
-
-    # Таблица истории изменений (если её нет)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS jobs_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            job_id INTEGER NOT NULL,
-            change_type TEXT NOT NULL,
-            old_values TEXT,
-            new_values TEXT,
-            changed_at TEXT NOT NULL,
-            changed_by TEXT DEFAULT 'system'
-        )
-    ''')
-
-    # Таблица версий истории
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS history_versions (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            current_version INTEGER NOT NULL DEFAULT 0
-        )
-    ''')
-
-    # Инициализируем версию истории если записи нет
-    cursor.execute('SELECT COUNT(*) FROM history_versions')
-    count = cursor.fetchone()[0]
-    if count == 0:
-        cursor.execute('INSERT INTO history_versions (id, current_version) VALUES (1, 0)')
 
     conn.commit()
     return conn
