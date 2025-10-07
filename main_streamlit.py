@@ -1,4 +1,6 @@
 import os
+from pprint import pprint
+
 import streamlit as st
 import sqlite3
 import pandas as pd
@@ -7,6 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 import base64
 import io
 from math import ceil
+import streamlit.components.v1 as components
 
 from draw_functions import hex_to_rgb, lighten_color, darken_color, \
     draw_rounded_rectangle, draw_dotted_line
@@ -799,6 +802,14 @@ def show_orders_page(conn):
 def show_jobs_page(conn, save_history_callback=None):
     st.header("⚙️ Работы")
 
+    # Инициализация состояния фильтров
+    if 'jobs_filters' not in st.session_state:
+        st.session_state.jobs_filters = {
+            'order_search': '',
+            'equipment_filter': "Все",
+            'status_filter': "Все"
+        }
+
     # Добавьте эту проверку в начало функции
     if 'history_restored' in st.session_state and st.session_state.history_restored:
         st.session_state.data_refresh_key += 1
@@ -828,8 +839,13 @@ def show_jobs_page(conn, save_history_callback=None):
             'days': 7
         }
 
+    # Создаем уникальный ключ для компонента
+    if 'chart_component_key' not in st.session_state:
+        st.session_state.chart_component_key = 0
+
     def save_history_after_change():
-        save_history_callback()
+        if save_history_callback:
+            save_history_callback()
 
     # Диалог разрешения конфликтов
     if st.session_state.conflict_dialog['show']:
@@ -1057,36 +1073,52 @@ def show_jobs_page(conn, save_history_callback=None):
         col_filter1, col_filter2, col_filter3 = st.columns([2, 2, 2])
 
         with col_filter1:
-            # Поле поиска по названию заказа
+            # Поле поиска по названию заказа - используем сохраненное значение
             search_term = st.text_input(
                 "🔍 Поиск заказа",
                 placeholder="Введите название заказа...",
+                value=st.session_state.jobs_filters['order_search'],
                 key=f"jobs_order_search_{st.session_state.data_refresh_key}"
             )
+            # Сохраняем значение фильтра при изменении
+            if search_term != st.session_state.jobs_filters['order_search']:
+                st.session_state.jobs_filters['order_search'] = search_term
+                # Не делаем rerun здесь, чтобы избежать мерцания
 
         with col_filter2:
-            # Фильтр по оборудованию
+            # Фильтр по оборудованию - используем сохраненное значение
             equipment_df = pd.read_sql("SELECT name FROM equipment ORDER BY sort_order", conn)
             all_equipment = ["Все"] + sorted(list(equipment_df['name'].unique()))
+
+            # Находим индекс сохраненного значения
+            current_equipment = st.session_state.jobs_filters['equipment_filter']
+            equipment_index = all_equipment.index(current_equipment) if current_equipment in all_equipment else 0
+
             selected_equipment_filter = st.selectbox(
                 "Оборудование",
                 options=all_equipment,
+                index=equipment_index,
                 key=f"jobs_equipment_filter_{st.session_state.data_refresh_key}"
             )
+            # Сохраняем значение фильтра при изменении
+            if selected_equipment_filter != st.session_state.jobs_filters['equipment_filter']:
+                st.session_state.jobs_filters['equipment_filter'] = selected_equipment_filter
 
         with col_filter3:
-            # Фильтр по статусу
+            # Фильтр по статусу - используем сохраненное значение
+            status_options = ["Все", "planned", 'started', "completed"]
+            current_status = st.session_state.jobs_filters['status_filter']
+            status_index = status_options.index(current_status) if current_status in status_options else 0
+
             selected_status_filter = st.selectbox(
                 "Статус",
-                options=["Все", "planned", 'started', "completed"],
-                format_func=lambda x: {
-                    "Все": "Все статусы",
-                    "planned": "Запланирована",
-                    "started": "Начата",
-                    "completed": "Завершена"
-                }[x],
+                options=status_options,
+                index=status_index,
                 key=f"jobs_status_filter_{st.session_state.data_refresh_key}"
             )
+            # Сохраняем значение фильтра при изменении
+            if selected_status_filter != st.session_state.jobs_filters['status_filter']:
+                st.session_state.jobs_filters['status_filter'] = selected_status_filter
 
         # Загружаем все работы с использованием ключа обновления
         cache_key = f"jobs_data_{st.session_state.data_refresh_key}"
@@ -1107,20 +1139,20 @@ def show_jobs_page(conn, save_history_callback=None):
         # Применяем фильтры
         filtered_jobs = jobs_df.copy()
 
-        # Фильтр по поиску
-        if search_term:
-            search_lower = search_term.lower()
-            filtered_jobs = filtered_jobs[
-                filtered_jobs['order_name'].str.lower().str.contains(search_lower, na=False)
-            ]
+        # Фильтр по названию заказа
+        if st.session_state.jobs_filters['order_search']:
+            filtered_jobs = filtered_jobs[filtered_jobs['order_name'].str.contains(
+                st.session_state.jobs_filters['order_search'],
+                na=False
+            )]
 
         # Фильтр по оборудованию
-        if selected_equipment_filter != "Все":
-            filtered_jobs = filtered_jobs[filtered_jobs['equipment_name'] == selected_equipment_filter]
+        if st.session_state.jobs_filters['equipment_filter'] != "Все":
+            filtered_jobs = filtered_jobs[filtered_jobs['equipment_name'] == st.session_state.jobs_filters['equipment_filter']]
 
         # Фильтр по статусу
-        if selected_status_filter != "Все":
-            filtered_jobs = filtered_jobs[filtered_jobs['status'] == selected_status_filter]
+        if st.session_state.jobs_filters['status_filter'] != "Все":
+            filtered_jobs = filtered_jobs[filtered_jobs['status'] == st.session_state.jobs_filters['status_filter']]
 
         # Показываем количество найденных работ
         st.info(f"📊 Найдено работ: {len(filtered_jobs)}")
@@ -1131,6 +1163,7 @@ def show_jobs_page(conn, save_history_callback=None):
 
         if not filtered_jobs.empty:
             for _, row in filtered_jobs.iterrows():
+                should_expand = st.session_state.get('expand_job_id') == row['id']
                 status_text = {'planned': '⏳ Запланирована', 'started': '☑️ Начата', 'completed': '✅ Завершена'}[
                     row['status']]
                 start_date_display = row['start_date'].strftime('%d.%m.%Y')
@@ -1157,7 +1190,8 @@ def show_jobs_page(conn, save_history_callback=None):
                 """, unsafe_allow_html=True)
 
                 with st.expander(
-                        f"{status_text}{lock_icon} {row['order_name']} → {row['equipment_name']} ({start_date_display}{offset_display})"):
+                        f"{status_text}{lock_icon} {row['order_name']} → {row['equipment_name']}"
+                        f"({start_date_display}{offset_display})", expanded=should_expand):
 
                     col21, col22, col23 = st.columns(3)
 
@@ -1383,6 +1417,10 @@ def show_jobs_page(conn, save_history_callback=None):
 
                             st.rerun()
 
+                    # После отображения формы сбрасываем флаг раскрытия
+                    if should_expand:
+                        st.session_state.expand_job_id = None
+
     with col3:
         # МИНИ-ДИАГРАММА ДЛЯ БЫСТРОГО ПРОСМОТРА
         # st.subheader("📊 Мини-диаграмма для проверки расписания")
@@ -1410,11 +1448,8 @@ def show_jobs_page(conn, save_history_callback=None):
             }
         # Рассчитываем конечную дату
         mini_end_date = mini_start_date + timedelta(days=mini_days - 1)
-        #
-        # # Создаем мини-диаграмму
-        # if st.button("🔄 Обновить мини-диаграмму") or mini_auto_update:
-        if True:
-            create_mini_gantt_chart(conn, mini_start_date, mini_end_date, mini_days)
+        create_mini_gantt_chart(conn, mini_start_date, mini_end_date, mini_days, selected_equipment_filter)
+
 
     with st.sidebar:
         st.caption("💾 Управление бэкапами")
@@ -1461,18 +1496,28 @@ def show_jobs_page(conn, save_history_callback=None):
 
 
 # Новая функция для создания мини-диаграммы
-def create_mini_gantt_chart(conn, start_date, end_date, mini_days, height=400):
+def create_mini_gantt_chart(conn, start_date, end_date, mini_days, equipment_filter="Все", height=400):
     """Создает компактную диаграмму Ганта для быстрого просмотра"""
 
-    # Загружаем оборудование
-    equipment_df = pd.read_sql('''
+    # Загружаем оборудование с учетом фильтра
+    if equipment_filter == "Все":
+        # Все оборудование
+        equipment_df = pd.read_sql('''
             SELECT e.*, et.name as type_name, et.color as type_color 
             FROM equipment e
             JOIN equipment_types et ON e.type_id = et.id
             WHERE e.show_on_chart = 1
             ORDER BY et.sort_order, e.sort_order
         ''', conn)
-
+    else:
+        # Только выбранное оборудование
+        equipment_df = pd.read_sql('''
+            SELECT e.*, et.name as type_name, et.color as type_color 
+            FROM equipment e
+            JOIN equipment_types et ON e.type_id = et.id
+            WHERE e.show_on_chart = 1 AND e.name = ?
+            ORDER BY et.sort_order, e.sort_order
+        ''', conn, params=(equipment_filter,))
     if equipment_df.empty:
         st.info("Нет оборудования для отображения")
         return
@@ -1522,8 +1567,8 @@ def create_mini_gantt_chart(conn, start_date, end_date, mini_days, height=400):
     font_medium = fonts['medium']
 
     # Рисуем заголовок
-    title = f"Мини-диаграмма: {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}"
-    draw.text((margin, 10), title, fill='black', font=font_medium)
+    # title = f"Мини-диаграмма: {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}"
+    # draw.text((margin, 10), title, fill='black', font=font_medium)
 
     # Метаданные дней
     day_metadata = {}
@@ -1560,6 +1605,7 @@ def create_mini_gantt_chart(conn, start_date, end_date, mini_days, height=400):
 
     # Рисуем оборудование и работы
     y_content = y_header + 30
+    job_coordinates = []  # Будем хранить координаты и информацию о работах
 
     for i, (_, equipment) in enumerate(equipment_df.iterrows()):
         y_row = y_content + i * row_height
@@ -1571,7 +1617,7 @@ def create_mini_gantt_chart(conn, start_date, end_date, mini_days, height=400):
                        fill=background_color)
 
         # Название оборудования
-        draw.text((margin + 5, y_row + 10), equipment['name'], fill='black', font=font_small)
+        # draw.text((margin + 5, y_row + 10), equipment['name'], fill='black', font=font_small)
 
         # Работы для этого оборудования
         equipment_jobs = jobs_df[jobs_df['equipment_name'] == equipment['name']]
@@ -1595,26 +1641,38 @@ def create_mini_gantt_chart(conn, start_date, end_date, mini_days, height=400):
 
                     # Позиционирование
                     day_start_virtual = day_info['virtual_start']
-                    x_start = (day_start_virtual + offset) * pixels_per_hour + margin
-                    x_end = x_start + hours * pixels_per_hour
+                    x_start_rect = (day_start_virtual + offset) * pixels_per_hour + margin
+                    x_end_rect = x_start_rect + hours * pixels_per_hour
 
                     # Ограничиваем по границам дня
                     day_end_virtual = day_info['virtual_end']
                     max_x_end = day_end_virtual * pixels_per_hour + margin
-                    x_end = min(x_end, max_x_end)
+                    x_end_rect = min(x_end_rect, max_x_end)
 
-                    if x_end > x_start:  # Если есть что рисовать
-                        # Прямоугольник работы
+                    if x_end_rect > x_start_rect:
+                        # Сохраняем координаты работы для обработки кликов
+                        job_coordinates.append({
+                            'x_start': x_start_rect,
+                            'x_end': x_end_rect,
+                            'y_start': y_row + 5,
+                            'y_end': y_row + row_height - 5,
+                            'job_id': job['id'],
+                            'order_name': job['order_name'],
+                            'equipment_name': job['equipment_name'],
+                            'order_id': job['order_id'],
+                            'equipment_id': job['equipment_id']
+                        })
+
+                        # Рисуем прямоугольник работы
                         job_color = hex_to_rgb(job['order_color'])
-                        draw.rectangle([x_start, y_row + 5, x_end, y_row + row_height - 5],
+                        draw.rectangle([x_start_rect, y_row + 5, x_end_rect, y_row + row_height - 5],
                                        fill=job_color, outline='black', width=1)
 
                         # Название заказа (сокращенное)
-                        short_name = job['order_name'][:8] + "..." if len(job['order_name']) > 8 else job[
-                            'order_name']
+                        short_name = job['order_name'][:8] + "..." if len(job['order_name']) > 8 else job['order_name']
                         text_width = draw.textlength(short_name, font_small)
-                        if text_width < (x_end - x_start - 4):
-                            text_x = x_start + (x_end - x_start - text_width) / 2
+                        if text_width < (x_end_rect - x_start_rect - 4):
+                            text_x = x_start_rect + (x_end_rect - x_start_rect - text_width) / 2
                             draw.text((text_x, y_row + 15), short_name, fill='white', font=font_small)
 
     # Конвертируем в base64 для отображения в Streamlit
@@ -1622,9 +1680,143 @@ def create_mini_gantt_chart(conn, start_date, end_date, mini_days, height=400):
     image.save(buffered, format="PNG")
     img_str = base64.b64encode(buffered.getvalue()).decode()
 
-    # Отображаем изображение
-    st.image(buffered, width="stretch",
-             caption=f"Расписание на {mini_days} дней")
+    # Создаем HTML компонент
+    html_code = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                #gantt-chart {{
+                    cursor: pointer;
+                    border: 2px solid #ddd;
+                    border-radius: 5px;
+                    max-width: 100%;
+                    transition: border-color 0.3s;
+                }}
+                #gantt-chart:hover {{
+                    border-color: #007bff;
+                }}
+                .job-tooltip {{
+                    position: absolute;
+                    background: rgba(0,0,0,0.8);
+                    color: white;
+                    padding: 5px 10px;
+                    border-radius: 3px;
+                    font-size: 12px;
+                    pointer-events: none;
+                    opacity: 0;
+                    transition: opacity 0.3s;
+                }}
+            </style>
+        </head>
+        <body>
+            <div style="position: relative;">
+                <img src="data:image/png;base64,{img_str}" 
+                     id="gantt-chart"
+                     onclick="handleChartClick(event)">
+                <div id="tooltip" class="job-tooltip"></div>
+            </div>
+
+            <script>
+                const jobCoordinates = {job_coordinates};
+                let currentHoveredJob = null;
+
+                function handleChartClick(event) {{
+                    const result = findJobAtPosition(event);
+                    if (result.job) {{
+                        // Сохраняем ВСЕ данные о работе в sessionStorage
+                        const jobData = {{
+                            job_id: result.job.job_id,
+                            order_name: result.job.order_name,
+                            equipment_name: result.job.equipment_name,
+                            order_id: result.job.order_id,
+                            equipment_id: result.job.equipment_id,
+                            action: 'job_selected_from_chart',
+                            timestamp: new Date().getTime()
+                        }};
+
+                        // Сохраняем в sessionStorage
+                        sessionStorage.setItem('job_selected_from_chart', JSON.stringify(jobData));
+
+                        // Показываем уведомление
+                        showSelectionNotification(jobData.order_name, jobData.equipment_name);
+                    }}
+                }}
+
+                function showSelectionNotification(orderName, equipmentName) {{
+                    // Создаем красивое уведомление
+                    const notification = document.createElement('div');
+                    notification.style.cssText = `
+                        position: fixed;
+                        top: 20px;
+                        right: 20px;
+                        background: #4CAF50;
+                        color: white;
+                        padding: 15px 20px;
+                        border-radius: 5px;
+                        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                        z-index: 10000;
+                        font-family: Arial, sans-serif;
+                        font-size: 14px;
+                        max-width: 300px;
+                    `;
+                    notification.innerHTML = `
+                        <div style="font-weight: bold;">✅ Работа выбрана</div>
+                        <div style="margin-top: 5px; font-size: 12px;">
+                            ${{equipmentName}} → ${{orderName}}
+                        </div>
+                        <div style="margin-top: 5px; font-size: 11px; opacity: 0.8;">
+                            Нажмите "Найти работу" для деталей
+                        </div>
+                    `;
+
+                    document.body.appendChild(notification);
+
+                    // Автоматически скрываем через 3 секунды
+                    setTimeout(() => {{
+                        notification.remove();
+                    }}, 3000);
+                }}
+
+                function findJobAtPosition(event) {{
+                    const img = event.target;
+                    const rect = img.getBoundingClientRect();
+                    const scaleX = img.naturalWidth / rect.width;
+                    const scaleY = img.naturalHeight / rect.height;
+
+                    const x = (event.clientX - rect.left) * scaleX;
+                    const y = (event.clientY - rect.top) * scaleY;
+
+                    for (const job of jobCoordinates) {{
+                        if (x >= job.x_start && x <= job.x_end && 
+                            y >= job.y_start && y <= job.y_end) {{
+                            return {{ job: job, x: x, y: y }};
+                        }}
+                    }}
+                    return {{ job: null, x: x, y: y }};
+                }}
+
+                // Добавляем обработку наведения для подсказок
+                document.getElementById('gantt-chart').addEventListener('mousemove', function(event) {{
+                    const result = findJobAtPosition(event);
+                    const tooltip = document.getElementById('tooltip');
+
+                    if (result.job) {{
+                        tooltip.style.opacity = '1';
+                        tooltip.style.left = (event.clientX + 10) + 'px';
+                        tooltip.style.top = (event.clientY + 10) + 'px';
+                        tooltip.textContent = result.job.equipment_name + ' → ' + result.job.order_name;
+                    }} else {{
+                        tooltip.style.opacity = '0';
+                    }}
+                }});
+            </script>
+        </body>
+        </html>
+        """
+
+    # Отображаем компонент
+    components.html(html_code, height=total_height + 50, scrolling=False)
 
 
 def get_equipment_name(conn, equipment_id: int) -> str:
@@ -2444,9 +2636,10 @@ def show_gantt_chart(conn, save_history_callback=None):
                     #             draw.line([wave_x_start, wave_y, wave_x_end, wave_y],
                     #                       fill='red', width=1)
 
-                # Текст внутри блока (остается без изменений)
+                # Текст внутри блока работы (ЗАМЕНИТЕ СУЩЕСТВУЮЩИЙ БЛОК ТЕКСТА)
                 job_width = x_finish - x_start
                 if job_width > 60:
+                    # Основной текст - название заказа
                     text = job['order_name']
                     if work_start_date < start_date:
                         text = "← " + text
@@ -2466,13 +2659,41 @@ def show_gantt_chart(conn, save_history_callback=None):
 
                     if text_width_px <= job_width - 10:
                         text_x = x_start + (job_width - text_width_px) / 2
-                        text_y = y_pos - 8 if job_height >= 30 else y_pos - 5
+                        text_y = y_pos - 10 if job_height >= 30 else y_pos - 7
 
                         text_color = (255, 255, 255)
                         if color_hex in ['#FFFFFF', '#FFFF00', '#00FFFF']:
                             text_color = (0, 0, 0)
 
                         draw.text((text_x, text_y), text, fill=text_color, font=text_font)
+
+                        # === НОВЫЙ КОД ДЛЯ ОТОБРАЖЕНИЯ ТИРАЖА ===
+                        if job_height >= 40:  # Только если высота блока позволяет
+                            # Получаем информацию о тираже заказа
+                            cursor = conn.cursor()
+                            cursor.execute("SELECT quantity FROM orders WHERE id = ?", (job['order_id'],))
+                            order_quantity = cursor.fetchone()
+
+                            if order_quantity and order_quantity[0] > 0:
+                                quantity_text = f"{order_quantity[0]} шт."
+                                quantity_font = font_medium
+
+                                # Рассчитываем ширину текста тиража
+                                quantity_width_px = draw.textlength(quantity_text, font=quantity_font)
+
+                                # Проверяем, помещается ли текст тиража
+                                if quantity_width_px <= job_width - 10:
+                                    # Позиционируем текст тиража под названием заказа
+                                    quantity_x = x_start + (job_width - quantity_width_px) / 2
+                                    quantity_y = y_pos + 5 if job_height >= 50 else y_pos + 2
+
+                                    # Рисуем текст тиража
+                                    quantity_color = (255, 255, 255)  # Белый цвет
+                                    if color_hex in ['#FFFFFF', '#FFFF00', '#00FFFF']:
+                                        quantity_color = (0, 0, 0)  # Черный цвет для светлых фонов
+
+                                    draw.text((quantity_x, quantity_y), quantity_text,
+                                              fill=quantity_color, font=quantity_font)
 
                 # # Информация о работах, выходящих за границы диаграммы
                 # out_of_bounds_jobs = []

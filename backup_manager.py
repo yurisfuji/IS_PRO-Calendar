@@ -200,8 +200,8 @@ def init_db():
             VALUES (1, 'week', 20, 70, 80, ?)
         ''', (datetime.now().date().isoformat(),))
 
-        # Таблица истории изменений
-        cursor.execute('''
+    # Таблица истории изменений
+    cursor.execute('''
             CREATE TABLE IF NOT EXISTS jobs_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 job_id INTEGER NOT NULL,
@@ -220,8 +220,8 @@ def init_db():
             )
         ''')
 
-        # Таблица управления версиями
-        cursor.execute('''
+    # Таблица управления версиями
+    cursor.execute('''
             CREATE TABLE IF NOT EXISTS history_versions (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 current_version INTEGER NOT NULL DEFAULT 0,
