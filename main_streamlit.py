@@ -821,7 +821,6 @@ def show_jobs_page(conn, save_history_callback=None):
         st.session_state.conflict_dialog = {
             'show': False,
             'job_data': None,
-            'conflicts': [],
             'suggested_date': None,
             'suggested_offset': None,
             'action': None,
@@ -850,6 +849,7 @@ def show_jobs_page(conn, save_history_callback=None):
     # Диалог разрешения конфликтов
     if st.session_state.conflict_dialog['show']:
         job_data = st.session_state.conflict_dialog['job_data']
+        print(st.session_state.conflict_dialog)
 
         # Безопасное получение equipment_id - теперь он есть в job_data
         equipment_id = st.session_state.conflict_dialog['equipment_id']
@@ -1049,7 +1049,6 @@ def show_jobs_page(conn, save_history_callback=None):
                             'show': True,
                             'job_data': {
                                 'order_id': selected_order,
-                                'equipment_id': selected_equipment,  # ДОБАВЛЯЕМ equipment_id
                                 'duration_hours': duration_hours,
                                 'hour_offset': hour_offset,
                                 'start_date': start_date_iso,
@@ -1057,6 +1056,7 @@ def show_jobs_page(conn, save_history_callback=None):
                                 'is_locked': 0,
                                 'is_new': True
                             },
+                            'equipment_id': selected_equipment,  # ДОБАВЛЯЕМ equipment_id
                             'suggested_date': available_date,
                             'suggested_offset': available_offset,
                             'action': None
