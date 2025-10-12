@@ -22,6 +22,9 @@ def draw_rounded_rectangle(draw, xy, radius=5, fill=None, outline=None, width=1)
     """Рисует прямоугольник со скругленными углами"""
     x1, y1, x2, y2 = xy
 
+    if (x2 - radius) <= (x1 + radius):
+        return
+
     corrected_radius = radius if (y2 - y1) / radius > 3 else radius / 3
 
     # Основной прямоугольник (без углов)

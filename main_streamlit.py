@@ -1143,7 +1143,8 @@ def show_jobs_page(conn, save_history_callback=None):
         if st.session_state.jobs_filters['order_search']:
             filtered_jobs = filtered_jobs[filtered_jobs['order_name'].str.contains(
                 st.session_state.jobs_filters['order_search'],
-                na=False
+                na=False,
+                case=False
             )]
 
         # Фильтр по оборудованию
