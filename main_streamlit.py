@@ -11,7 +11,7 @@ import base64
 import io
 from math import ceil
 import streamlit.components.v1 as components
-from streamlit_js_eval import streamlit_js_eval
+
 
 from draw_functions import hex_to_rgb, lighten_color, darken_color, \
     draw_rounded_rectangle, draw_dotted_line
