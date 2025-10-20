@@ -487,8 +487,8 @@ def move_job_to_previous(conn, job_id):
     cursor.execute('''
         SELECT * FROM jobs 
         WHERE equipment_id = ? AND id != ?
-        AND (start_date < ? OR (start_date = ? AND (hour_offset OR 0) < ?))
-        ORDER BY start_date DESC, (hour_offset OR 0) DESC 
+        AND (start_date < ? OR (start_date = ? AND hour_offset < ?))
+        ORDER BY start_date DESC, hour_offset DESC 
         LIMIT 1
     ''', (equipment_id, job_id, current_start_date, current_start_date, current_offset))
 
@@ -554,8 +554,8 @@ def move_job_to_next(conn, job_id):
     cursor.execute('''
         SELECT * FROM jobs 
         WHERE equipment_id = ? AND id != ?
-        AND (start_date > ? OR (start_date = ? AND (hour_offset OR 0) > ?))
-        ORDER BY start_date ASC, (hour_offset OR 0) ASC 
+        AND (start_date > ? OR (start_date = ? AND hour_offset > ?))
+        ORDER BY start_date ASC, hour_offset ASC 
         LIMIT 1
     ''', (equipment_id, job_id, current_start_date, current_start_date, current_offset))
 
@@ -568,7 +568,7 @@ def move_job_to_next(conn, job_id):
         diff = get_work_hours_between_jobs(conn, job_id, next_job['id'])
         # Устанавливаем новую дату начала - накануне следующей работы
         next_start_date = current_start_date
-        next_offset = current_offset + diff - 0.25
+        next_offset = current_offset + diff
 
         correct_new_start_date, correct_new_offset = adjust_date_for_work_hours(conn, next_start_date, next_offset)
 

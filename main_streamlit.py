@@ -1,3 +1,4 @@
+import json
 import os
 from pprint import pprint
 
@@ -10,6 +11,7 @@ import base64
 import io
 from math import ceil
 import streamlit.components.v1 as components
+from streamlit_js_eval import streamlit_js_eval
 
 from draw_functions import hex_to_rgb, lighten_color, darken_color, \
     draw_rounded_rectangle, draw_dotted_line
@@ -958,7 +960,7 @@ def show_jobs_page(conn, save_history_callback=None):
                 st.info("Действие отменено")
                 st.rerun()
 
-    col1, col2, col3 = st.columns([1, 3, 1])
+    col1, col2, col3 = st.columns([2, 5, 3])
 
     with col1:
         st.subheader("Добавить работу")
@@ -1143,7 +1145,8 @@ def show_jobs_page(conn, save_history_callback=None):
         if st.session_state.jobs_filters['order_search']:
             filtered_jobs = filtered_jobs[filtered_jobs['order_name'].str.contains(
                 st.session_state.jobs_filters['order_search'],
-                na=False
+                na=False,
+                case=False
             )]
 
         # Фильтр по оборудованию
@@ -2097,20 +2100,51 @@ def show_gantt_chart(conn, save_history_callback=None):
     start_date = st.session_state.gantt_settings['chart_start_date']
 
     # Отображаем текущую выбранную дату для информации
-    # st.info(
-    #     f"**Текущая дата начала графика:** {st.session_state.chart_start_date.strftime('%d.%m.%Y')} ({st.session_state.chart_start_date.strftime('%A')})")
+    equipment_filter_from_detail = st.session_state.get('detail_equipment', "Все")
 
-    # Загружаем данные для предварительного расчета ширины
-    # if show_only_active:
-    #     equipment_filter = "WHERE e.show_on_chart = 1"
-    # else:
-    equipment_filter = ""
+    if equipment_filter_from_detail != "Все":
+        equipment_filter_sql = f"WHERE e.show_on_chart = 1 AND e.name = '{equipment_filter_from_detail}'"
+    else:
+        equipment_filter_sql = "WHERE e.show_on_chart = 1"
 
     equipment_df = pd.read_sql(f'''
         SELECT e.*, et.name as type_name, et.color as type_color 
         FROM equipment e
         JOIN equipment_types et ON e.type_id = et.id
-        {equipment_filter}
+        {equipment_filter_sql}
+        ORDER BY et.sort_order, e.sort_order
+    ''', conn)
+
+    if not equipment_df.empty:
+        # [Остальной код определения диапазона дат...]
+
+        # Загружаем полные данные для построения диаграммы с учетом фильтра оборудования из детализации
+        if equipment_filter_from_detail != "Все":
+            jobs_filter_sql = f"AND e.name = '{equipment_filter_from_detail}'"
+        else:
+            jobs_filter_sql = ""
+
+        jobs_df = pd.read_sql(f'''
+            SELECT 
+                j.id, j.order_id, j.equipment_id, j.duration_hours, 
+                COALESCE(j.hour_offset, 0) as hour_offset,
+                j.start_date, j.status, j.is_locked,
+                o.name as order_name, o.color as order_color, 
+                e.name as equipment_name, et.name as equipment_type
+            FROM jobs j
+            JOIN orders o ON j.order_id = o.id
+            JOIN equipment e ON j.equipment_id = e.id
+            JOIN equipment_types et ON e.type_id = et.id
+            WHERE e.show_on_chart = 1
+            {jobs_filter_sql}
+            ORDER BY et.sort_order, e.sort_order, j.start_date
+        ''', conn)
+
+    equipment_df = pd.read_sql(f'''
+        SELECT e.*, et.name as type_name, et.color as type_color 
+        FROM equipment e
+        JOIN equipment_types et ON e.type_id = et.id
+        {equipment_filter_sql}
         ORDER BY et.sort_order, e.sort_order
     ''', conn)
 
@@ -2137,10 +2171,12 @@ def show_gantt_chart(conn, save_history_callback=None):
             JOIN orders o ON j.order_id = o.id
             JOIN equipment e ON j.equipment_id = e.id
             JOIN equipment_types et ON e.type_id = et.id
-            {equipment_filter.replace("WHERE", "AND") if equipment_filter else ""}
+            {equipment_filter_sql.replace("WHERE", "AND") if equipment_filter_sql else ""}
             ORDER BY et.sort_order, e.sort_order, j.start_date
         ''', conn)
 
+        calendar_start_date = start_date
+        calendar_end_date = end_date
         # Расширяем диапазон для загрузки календаря
         if not jobs_df.empty:
             # Добавляем фильтрацию для диаграммы
@@ -2159,21 +2195,19 @@ def show_gantt_chart(conn, save_history_callback=None):
 
             # Используем отфильтрованные данные для диаграммы
             jobs_df_for_diagram = filtered_for_chart
+            if not jobs_df_for_diagram.empty:
+                min_start_date = pd.to_datetime(jobs_df_for_diagram['start_date']).min().date()
+                calendar_start_date = min(start_date, min_start_date)
 
-            min_start_date = pd.to_datetime(jobs_df_for_diagram['start_date']).min().date()
-            calendar_start_date = min(start_date, min_start_date)
+                # Оцениваем максимальную finish_date: start_date + максимальная длительность в днях
+                max_duration_days = ceil(
+                    jobs_df_for_diagram['duration_hours'].max() / 8)  # Предполагаем минимум 8 часов в день
+                max_start_date = pd.to_datetime(jobs_df_for_diagram['start_date']).max().date()
+                estimated_max_finish = max_start_date + timedelta(days=max_duration_days * 2)  # *2 для запаса
 
-            # Оцениваем максимальную finish_date: start_date + максимальная длительность в днях
-            max_duration_days = ceil(
-                jobs_df_for_diagram['duration_hours'].max() / 8)  # Предполагаем минимум 8 часов в день
-            max_start_date = pd.to_datetime(jobs_df_for_diagram['start_date']).max().date()
-            estimated_max_finish = max_start_date + timedelta(days=max_duration_days * 2)  # *2 для запаса
-
-            calendar_end_date = max(end_date, estimated_max_finish)
+                calendar_end_date = max(end_date, estimated_max_finish)
         else:
             jobs_df_for_diagram = jobs_df
-            calendar_start_date = start_date
-            calendar_end_date = end_date
 
         # Загружаем календарь для расчета ширины
         calendar_df = pd.read_sql(
@@ -2201,10 +2235,10 @@ def show_gantt_chart(conn, save_history_callback=None):
         # Высота области просмотра
         equipment_count = len(equipment_df)
         header_height = 100
-        total_height = equipment_count * row_height + header_height + margin * 2
-        total_height = max(total_height, 400)
+        total_height = equipment_count * row_height + header_height + margin
+        total_height = total_height  # max(total_height, int(row_height * 4))
 
-        viewport_height = min(total_height, 800)
+        viewport_height = min(total_height + margin / 2, 800)
 
         # Показываем информацию о размерах
         # st.markdown(f"""
@@ -2827,7 +2861,7 @@ def show_gantt_chart(conn, save_history_callback=None):
         # Блок детализации работ - ОБНОВЛЕННАЯ ВЕРСИЯ
         st.subheader("🔍 Детализация работ")
 
-        if not jobs_df_for_diagram.empty:
+        if not False:  # jobs_df_for_diagram.empty:
             # ФИЛЬТРЫ С ПОИСКОМ И ВЫПАДАЮЩИМ СПИСКОМ
             col_filter2, col_filter3, col_filter4 = st.columns([2, 2, 2])
 
@@ -2840,13 +2874,27 @@ def show_gantt_chart(conn, save_history_callback=None):
                 )
 
             with col_filter3:
-                # Фильтр по оборудованию
-                all_equipment = ["Все"] + sorted(list(jobs_df_for_diagram['equipment_name'].unique()))
+                # Фильтр по оборудованию - загружаем ВСЕ оборудование из БД, а не из отфильтрованных данных
+                equipment_df_all = pd.read_sql("SELECT name FROM equipment WHERE show_on_chart=1 ORDER BY sort_order",
+                                               conn)
+                all_equipment = ["Все"] + sorted(list(equipment_df_all['name'].unique()))
+
+                # Получаем текущее значение фильтра
+                current_equipment_filter = st.session_state.get('detail_equipment', "Все")
+                equipment_index = all_equipment.index(
+                    current_equipment_filter) if current_equipment_filter in all_equipment else 0
+
                 selected_equipment = st.selectbox(
                     "Оборудование",
                     options=all_equipment,
+                    index=equipment_index,
                     key="detail_equipment"
                 )
+
+                # Если фильтр изменился, перерисовываем диаграмму
+                if selected_equipment != current_equipment_filter:
+                    st.session_state.detail_equipment = selected_equipment
+                    st.rerun()
 
             with col_filter4:
                 # Фильтр по статусу
@@ -2923,7 +2971,6 @@ def show_gantt_chart(conn, save_history_callback=None):
 
                 display_df.columns = ['Заказ', 'Оборудование', 'Начало', 'Завершение',
                                       'Длительность', 'Смещение', 'Статус']
-
 
                 st.dataframe(display_df, width='stretch')
 
